@@ -1,15 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
 import Webcam from 'react-webcam';
 import Icon from './Icon';
+import AuthGate from './AuthGate';
+import { API_BASE_URL, api } from '../api';
 import './Detect.css';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 const ADMIN_VEHICLES_URL = `${API_BASE_URL.replace(/\/api\/?$/, '')}/admin/vehicles/vehicle/`;
 const SCAN_INTERVAL_MS = 2200;
 const statusLabels = { genuine: 'Genuine match', fraud: 'Possible mismatch', not_found: 'Not found', needs_review: 'Needs review', unreadable: 'Plate unreadable', no_vehicle: 'No plate detected' };
 
-const Detect = () => {
+const Detect = () => (
+    <AuthGate>
+        {({ username, onLogout }) => <DetectionDashboard username={username} onLogout={onLogout} />}
+    </AuthGate>
+);
+
+const DetectionDashboard = ({ username, onLogout }) => {
     const webcamRef = useRef(null);
     const busyRef = useRef(false);
     const analyzeRef = useRef(null);
@@ -26,8 +32,8 @@ const Detect = () => {
     const refreshRecords = useCallback(async () => {
         try {
             const [vehiclesResponse, eventsResponse] = await Promise.all([
-                axios.get(`${API_BASE_URL}/vehicles/`),
-                axios.get(`${API_BASE_URL}/events/`)
+                api.get('/vehicles/'),
+                api.get('/events/')
             ]);
             setVehicles(vehiclesResponse.data.vehicles || []);
             setEvents(eventsResponse.data.events || []);
@@ -37,7 +43,7 @@ const Detect = () => {
     }, []);
 
     useEffect(() => {
-        axios.get(`${API_BASE_URL}/health/`, { timeout: 5000 })
+        api.get('/health/', { timeout: 5000 })
             .then(() => setApiState('connected'))
             .catch(() => setApiState('disconnected'));
         refreshRecords();
@@ -49,7 +55,7 @@ const Detect = () => {
         setProcessing(true);
         setError('');
         try {
-            const response = await axios.post(`${API_BASE_URL}/detect/`, { image: imageData }, { timeout: 60000 });
+            const response = await api.post('/detect/', { image: imageData }, { timeout: 60000 });
             setResult(response.data);
             if (response.data.status !== 'no_vehicle') refreshRecords();
         } catch (requestError) {
@@ -81,7 +87,14 @@ const Detect = () => {
     }, [monitoring]);
 
     const handleFileChange = (event) => {
-        setSelectedFile(event.target.files?.[0] || null);
+        const file = event.target.files?.[0] || null;
+        if (file && (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024)) {
+            setSelectedFile(null);
+            setError('Choose a JPEG, PNG, or WebP image smaller than 8 MB.');
+            event.target.value = '';
+            return;
+        }
+        setSelectedFile(file);
         setError('');
     };
     const cameraError = () => {
@@ -98,6 +111,7 @@ const Detect = () => {
                         <div className="eyebrow"><span className={`connection-dot ${apiState}`} /> VEHICLE VERIFICATION</div>
                         <h1>Live Vehicle Detection</h1>
                         <p>Capture a passing vehicle, read its plate, and compare it with registered vehicle details.</p>
+                        <div className="detect-session"><span>Signed in as <strong>{username}</strong></span><button type="button" onClick={onLogout}>Sign out</button></div>
                     </header>
 
                     <section className="monitor-grid">
@@ -122,7 +136,7 @@ const Detect = () => {
                                     <button className="secondary-button" disabled={processing} onClick={captureAndAnalyze}><Icon className="fas fa-crosshairs" /> Capture & check</button>
                                     <button className="icon-button" aria-label="Turn camera off" onClick={() => { setMonitoring(false); setCameraOn(false); }}><Icon className="fas fa-video-slash" /></button>
                                 </>}
-                                <label className="upload-button"><Icon className="fas fa-image" /> {selectedFile ? 'Image selected' : 'Choose image'}<input type="file" accept="image/*" capture="environment" onChange={handleFileChange} /></label>
+                                <label className="upload-button"><Icon className="fas fa-image" /> {selectedFile ? 'Image selected' : 'Choose image'}<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handleFileChange} /></label>
                                 {selectedFile && <button className="secondary-button analyze-upload" disabled={processing} onClick={captureAndAnalyze}>Analyze image</button>}
                             </div>
                             {error && <div className="detect-error"><Icon className="fas fa-circle-exclamation" /> {error}</div>}

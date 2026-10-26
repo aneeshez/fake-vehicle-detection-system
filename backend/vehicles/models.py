@@ -1,3 +1,6 @@
+import re
+
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -21,9 +24,15 @@ class Vehicle(models.Model):
         ordering = ["number_plate"]
 
     def save(self, *args, **kwargs):
-        self.number_plate = "".join(char for char in self.number_plate.upper() if char.isalnum())
+        self.number_plate = re.sub(r"[^A-Z0-9]", "", self.number_plate.upper())
+        if not self.number_plate:
+            raise ValidationError({"number_plate": "Enter a valid vehicle plate."})
         self.color = self.color.strip().lower()
         self.vehicle_type = self.vehicle_type.strip().lower()
+        if self.vehicle_type not in dict(self.VEHICLE_TYPES):
+            raise ValidationError({"vehicle_type": "Choose a supported vehicle type."})
+        if not self.color:
+            raise ValidationError({"color": "Enter a vehicle color."})
         super().save(*args, **kwargs)
 
     def __str__(self):

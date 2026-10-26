@@ -94,31 +94,6 @@
     line-height: 1.6;
 }
 
-.social-links {
-    display: flex;
-    gap: 1rem;
-    margin-top: 1rem;
-}
-
-.social-icon {
-    width: 40px;
-    height: 40px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    text-decoration: none;
-    transition: all 0.3s ease;
-}
-
-.social-icon:hover {
-    background: linear-gradient(45deg, #00ff9d, #00d8ff);
-    color: #000;
-    transform: translateY(-3px);
-}
-
 .contact-form-container {
     background: rgba(255, 255, 255, 0.1);
     padding: 2rem;

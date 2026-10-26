@@ -1,17 +1,21 @@
 import base64
 import binascii
+import io
 import os
 import re
 import threading
+import warnings
 
 import cv2
 import numpy as np
+from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 from fast_alpr import ALPR
 from ultralytics import YOLO
 
 
 _model_lock = threading.Lock()
+_inference_lock = threading.Lock()
 _alpr = None
 _vehicle_model = None
 _model_state = {"alpr": "not_loaded", "vehicle": "not_loaded", "error": ""}
@@ -19,7 +23,8 @@ VEHICLE_CLASS_IDS = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 
 def model_state():
-    return dict(_model_state)
+    with _model_lock:
+        return {"alpr": _model_state["alpr"], "vehicle": _model_state["vehicle"], "error": _model_state["error"]}
 
 
 def _get_models():
@@ -47,6 +52,7 @@ def _get_models():
                 _model_state["vehicle"] = "error"
                 _model_state["error"] = f"Could not load vehicle detector: {exc}"
                 raise RuntimeError(_model_state["error"]) from exc
+        _model_state["error"] = ""
     return _alpr, _vehicle_model
 
 
@@ -60,6 +66,19 @@ def _decode_image(data_url):
         raise ValueError("The image data is not valid base64.") from exc
     if len(raw) > 8 * 1024 * 1024:
         raise ValueError("The image must be smaller than 8 MB.")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as source:
+                if source.format not in {"JPEG", "PNG", "WEBP"}:
+                    raise ValueError("Use a JPEG, PNG, or WebP image.")
+                if source.width * source.height > 20_000_000:
+                    raise ValueError("The image dimensions are too large. Use an image under 20 megapixels.")
+                source.verify()
+    except ValueError:
+        raise
+    except (UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning, OSError) as exc:
+        raise ValueError("The image file is not valid or is too large to process.") from exc
     image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
         raise ValueError("The image could not be decoded.")
@@ -150,14 +169,19 @@ def _box_values(detection):
 
 def process_frame(data_url):
     frame = _decode_image(data_url)
-    alpr, vehicle_model = _get_models()
-    vehicles = _vehicle_detections(frame, vehicle_model)
-    plates = alpr.predict(frame)
+    with _inference_lock:
+        alpr, vehicle_model = _get_models()
+        vehicles = _vehicle_detections(frame, vehicle_model)
+        plates = alpr.predict(frame)
 
     candidates = []
     for item in plates:
         text = "" if item.ocr is None else re.sub(r"[^A-Z0-9]", "", item.ocr.text.upper())
         box = _box_values(item.detection)
+        box[0] = min(max(box[0], 0), frame.shape[1])
+        box[1] = min(max(box[1], 0), frame.shape[0])
+        box[2] = min(max(box[2], 0), frame.shape[1])
+        box[3] = min(max(box[3], 0), frame.shape[0])
         x1, y1, x2, y2 = box
         if x2 <= x1 or y2 <= y1:
             continue
